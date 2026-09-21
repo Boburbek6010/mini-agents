@@ -1,0 +1,261 @@
+@import 'tailwindcss';
+
+@font-face {
+  font-family: 'FS Pixel Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/FSPixelSansUnicode-Regular.ttf') format('truetype');
+}
+
+:root {
+  /* Core palette */
+  --color-bg: #202c2c;
+  --color-bg-dark: #182222;
+  --color-bg-thumb: #32413e;
+  --color-border: #607268;
+  --color-accent: #a85333;
+  --color-accent-bright: #f3b58c;
+
+  /* Text */
+  --color-text: rgba(255, 255, 255, 0.9);
+  --color-text-muted: rgba(255, 255, 255, 0.5);
+
+  /* Buttons */
+  --color-btn-bg: #35443e;
+  --color-btn-hover: #4b6154;
+  --color-active-bg: #526855;
+
+  /* Semantic */
+  --color-reset-text: #ecc;
+  --color-danger: #d14249;
+  --color-warning: #ff8d14;
+
+  /* Status */
+  --color-status-permission: #cca700;
+  --color-status-active: #3794ff;
+  --color-status-success: #89d185;
+  --color-status-error: var(--color-danger);
+
+  /* Shadow */
+  --shadow-pixel: 2px 2px 0px #0a0a14;
+
+  /* Non-utility values */
+  --vignette: radial-gradient(ellipse at center, transparent 65%, rgba(10, 20, 18, 0.25) 100%);
+  --btn-disabled-opacity: 0.35;
+}
+
+@theme inline {
+  /* 1px base so Tailwind spacing maps directly to pixels (pixel-art project) */
+  --spacing: 1px;
+
+  --font-pixel: 'FS Pixel Sans', sans-serif;
+
+  /* Text sizes (pixel-art scale, base = 22px) */
+  --text-*: initial;
+  --text-2xs: 16px;
+  --text-xs: 18px;
+  --text-sm: 20px;
+  --text-base: 22px;
+  --text-lg: 26px;
+  --text-xl: 30px;
+  --text-2xl: 36px;
+  --text-3xl: 44px;
+  --text-4xl: 52px;
+  --text-5xl: 64px;
+
+  /* Colors — reference :root vars so VS Code shows swatches */
+  --color-bg: var(--color-bg);
+  --color-bg-dark: var(--color-bg-dark);
+  --color-bg-thumb: var(--color-bg-thumb);
+  --color-border: var(--color-border);
+  --color-accent: var(--color-accent);
+  --color-text: var(--color-text);
+  --color-text-muted: var(--color-text-muted);
+  --color-btn-bg: var(--color-btn-bg);
+  --color-btn-hover: var(--color-btn-hover);
+  --color-active-bg: var(--color-active-bg);
+  --color-accent-bright: var(--color-accent-bright);
+  --color-reset-text: var(--color-reset-text);
+  --color-danger: var(--color-danger);
+  --color-warning: var(--color-warning);
+  --color-status-permission: var(--color-status-permission);
+  --color-status-active: var(--color-status-active);
+  --color-status-success: var(--color-status-success);
+  --color-status-error: var(--color-status-error);
+
+  /* Shadow */
+  --shadow-pixel: var(--shadow-pixel);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    @apply m-0 w-full h-full overflow-hidden font-pixel text-base text-text;
+  }
+
+  * {
+    @apply font-pixel;
+  }
+}
+
+@layer components {
+  .mascot-modal {
+    width: min(760px, calc(100vw - 24px));
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+    min-width: 0;
+  }
+  .mascot-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    padding: 0 10px;
+  }
+  .mascot-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    padding: 0 8px 14px;
+    border: 2px solid var(--color-border);
+    background: #293934;
+    cursor: pointer;
+  }
+  .mascot-card:disabled {
+    cursor: default;
+  }
+  .mascot-card:hover:not(:disabled),
+  .mascot-card-selected {
+    background: #425348;
+    border-color: var(--color-accent-bright);
+  }
+  .studio-heading {
+    position: absolute;
+    top: 24px;
+    left: 76px;
+    pointer-events: none;
+    z-index: 10;
+  }
+  .studio-heading h1 {
+    margin: 0;
+    font-size: 32px;
+    color: #f3ddc0;
+  }
+  .studio-heading p {
+    margin: 4px 0 0;
+    font-size: 18px;
+    color: #a8b8a9;
+  }
+  @media (max-width: 580px) {
+    .mascot-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .studio-heading {
+      top: 15px;
+      left: 60px;
+    }
+    .studio-heading h1 {
+      font-size: 26px;
+    }
+    .studio-heading p {
+      font-size: 16px;
+    }
+  }
+  /* Panel with standard pixel-art border + shadow */
+  .pixel-panel {
+    @apply bg-bg border-2 border-border rounded-none shadow-pixel;
+  }
+
+  /* Horizontal carousel for editor items */
+  .carousel {
+    @apply flex gap-8 overflow-x-auto flex-nowrap pb-2;
+  }
+
+  /* Pixel-art range slider (HSBC ColorPicker). The accent fill up to the thumb
+     is driven by the --range-fill custom property set inline per slider. */
+  .pixel-range {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 16px;
+    cursor: pointer;
+    border: 2px solid var(--color-border);
+    background: linear-gradient(
+      to right,
+      var(--color-accent) var(--range-fill, 50%),
+      var(--color-bg-dark) var(--range-fill, 50%)
+    );
+  }
+  .pixel-range::-webkit-slider-runnable-track {
+    -webkit-appearance: none;
+    height: 12px;
+    background: transparent;
+  }
+  .pixel-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 10px;
+    height: 18px;
+    margin-top: -5px;
+    background: var(--color-text);
+    border: 2px solid var(--color-border);
+    border-radius: 0;
+    box-shadow: var(--shadow-pixel);
+  }
+  .pixel-range:hover::-webkit-slider-thumb {
+    background: var(--color-accent-bright);
+  }
+  .pixel-range::-moz-range-track {
+    height: 12px;
+    background: transparent;
+  }
+  .pixel-range::-moz-range-thumb {
+    width: 10px;
+    height: 18px;
+    background: var(--color-text);
+    border: 2px solid var(--color-border);
+    border-radius: 0;
+    box-shadow: var(--shadow-pixel);
+  }
+  .pixel-range:hover::-moz-range-thumb {
+    background: var(--color-accent-bright);
+  }
+
+  /* Pulsing dot animation (DebugView, ToolOverlay) */
+  .pixel-pulse {
+    animation: pixel-pulse 1.5s ease-in-out infinite;
+  }
+
+  /* Pixel-style thin scrollbar utility — used by the Area card folder list
+     where the mapped-folder count can exceed the card height. */
+  .pixel-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .pixel-scrollbar::-webkit-scrollbar-track {
+    background: var(--color-bg-dark);
+  }
+  .pixel-scrollbar::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 0;
+  }
+  .pixel-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: var(--color-accent);
+  }
+  /* Firefox fallback */
+  .pixel-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) var(--color-bg-dark);
+  }
+}
+
+@keyframes pixel-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}

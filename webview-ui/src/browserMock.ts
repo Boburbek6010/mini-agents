@@ -1,0 +1,342 @@
+/**
+ * Browser runtime mock — fetches assets and injects the same postMessage
+ * events the VS Code extension would send.
+ *
+ * In Vite dev, it prefers pre-decoded JSON endpoints from middleware.
+ * In plain browser builds, it falls back to decoding PNGs at runtime.
+ *
+ * Only imported in browser runtime; tree-shaken from VS Code webview runtime.
+ */
+
+import { rgbaToHex } from '../../core/src/assets/colorUtils.ts';
+import {
+  CHAR_FRAME_H,
+  CHAR_FRAME_W,
+  CHAR_FRAMES_PER_ROW,
+  CHARACTER_DIRECTIONS,
+  FLOOR_TILE_SIZE,
+  WALL_BITMASK_COUNT,
+  WALL_GRID_COLS,
+  WALL_PIECE_HEIGHT,
+  WALL_PIECE_WIDTH,
+} from '../../core/src/assets/constants.ts';
+import type {
+  AssetIndex,
+  CatalogEntry,
+  CharacterDirectionSprites,
+  PetSpriteFrames,
+} from '../../core/src/assets/types.ts';
+import { PREVIEW_DEFAULT_SETTINGS, readPreviewState } from './transport/previewTransport.js';
+
+interface MockPayload {
+  characters: CharacterDirectionSprites[];
+  floorSprites: string[][][];
+  wallSets: string[][][][];
+  carpetSets: string[][][][];
+  furnitureCatalog: CatalogEntry[];
+  furnitureSprites: Record<string, string[][]>;
+  layout: unknown;
+  pets: PetSpriteFrames[];
+  petNames: string[];
+}
+
+// ── Module-level state ─────────────────────────────────────────────────────────
+
+let mockPayload: MockPayload | null = null;
+
+// ── PNG decode helpers (browser fallback) ───────────────────────────────────
+
+interface DecodedPng {
+  width: number;
+  height: number;
+  data: Uint8ClampedArray;
+}
+
+function getPixel(
+  data: Uint8ClampedArray,
+  width: number,
+  x: number,
+  y: number,
+): [number, number, number, number] {
+  const idx = (y * width + x) * 4;
+  return [data[idx], data[idx + 1], data[idx + 2], data[idx + 3]];
+}
+
+function readSprite(
+  png: DecodedPng,
+  width: number,
+  height: number,
+  offsetX = 0,
+  offsetY = 0,
+): string[][] {
+  const sprite: string[][] = [];
+  for (let y = 0; y < height; y++) {
+    const row: string[] = [];
+    for (let x = 0; x < width; x++) {
+      const [r, g, b, a] = getPixel(png.data, png.width, offsetX + x, offsetY + y);
+      row.push(rgbaToHex(r, g, b, a));
+    }
+    sprite.push(row);
+  }
+  return sprite;
+}
+
+async function decodePng(url: string): Promise<DecodedPng> {
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch PNG: ${url} (${res.status.toString()})`);
+  }
+  const blob = await res.blob();
+  const bitmap = await createImageBitmap(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    bitmap.close();
+    throw new Error('Failed to create 2d canvas context for PNG decode');
+  }
+  ctx.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  return { width: canvas.width, height: canvas.height, data: imageData.data };
+}
+
+async function fetchJsonOptional<T>(url: string): Promise<T | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+function getIndexedAssetPath(kind: 'characters' | 'floors' | 'walls', relPath: string): string {
+  return relPath.startsWith(`${kind}/`) ? relPath : `${kind}/${relPath}`;
+}
+
+async function decodeCharactersFromPng(
+  base: string,
+  index: AssetIndex,
+): Promise<CharacterDirectionSprites[]> {
+  const sprites: CharacterDirectionSprites[] = [];
+  for (const relPath of index.characters) {
+    const png = await decodePng(`${base}assets/${getIndexedAssetPath('characters', relPath)}`);
+    const frameWidth = png.width / CHAR_FRAMES_PER_ROW;
+    if (
+      (frameWidth !== CHAR_FRAME_W && frameWidth !== 32) ||
+      png.height !== CHAR_FRAME_H * CHARACTER_DIRECTIONS.length
+    ) {
+      throw new Error(`Invalid character sheet: ${relPath}`);
+    }
+    const byDir: CharacterDirectionSprites = { down: [], up: [], right: [] };
+
+    for (let dirIdx = 0; dirIdx < CHARACTER_DIRECTIONS.length; dirIdx++) {
+      const dir = CHARACTER_DIRECTIONS[dirIdx];
+      const rowOffsetY = dirIdx * CHAR_FRAME_H;
+      const frames: string[][][] = [];
+      for (let frame = 0; frame < CHAR_FRAMES_PER_ROW; frame++) {
+        frames.push(readSprite(png, frameWidth, CHAR_FRAME_H, frame * frameWidth, rowOffsetY));
+      }
+      byDir[dir] = frames;
+    }
+
+    sprites.push(byDir);
+  }
+  return sprites;
+}
+
+async function decodeFloorsFromPng(base: string, index: AssetIndex): Promise<string[][][]> {
+  const floors: string[][][] = [];
+  for (const relPath of index.floors) {
+    const png = await decodePng(`${base}assets/${getIndexedAssetPath('floors', relPath)}`);
+    floors.push(readSprite(png, FLOOR_TILE_SIZE, FLOOR_TILE_SIZE));
+  }
+  return floors;
+}
+
+async function decodeWallsFromPng(base: string, index: AssetIndex): Promise<string[][][][]> {
+  const wallSets: string[][][][] = [];
+  for (const relPath of index.walls) {
+    const png = await decodePng(`${base}assets/${getIndexedAssetPath('walls', relPath)}`);
+    const set: string[][][] = [];
+    for (let mask = 0; mask < WALL_BITMASK_COUNT; mask++) {
+      const ox = (mask % WALL_GRID_COLS) * WALL_PIECE_WIDTH;
+      const oy = Math.floor(mask / WALL_GRID_COLS) * WALL_PIECE_HEIGHT;
+      set.push(readSprite(png, WALL_PIECE_WIDTH, WALL_PIECE_HEIGHT, ox, oy));
+    }
+    wallSets.push(set);
+  }
+  return wallSets;
+}
+
+async function decodeFurnitureFromPng(
+  base: string,
+  catalog: CatalogEntry[],
+): Promise<Record<string, string[][]>> {
+  const sprites: Record<string, string[][]> = {};
+  for (const entry of catalog) {
+    const png = await decodePng(`${base}assets/${entry.furniturePath}`);
+    sprites[entry.id] = readSprite(png, entry.width, entry.height);
+  }
+  return sprites;
+}
+
+// ── Public API ─────────────────────────────────────────────────────────────────
+
+/**
+ * Call before createRoot() in main.tsx.
+ * Fetches all pre-decoded assets from the Vite dev server and stores them
+ * for dispatchMockMessages().
+ */
+export async function initBrowserMock(): Promise<void> {
+  console.log('[BrowserMock] Loading assets...');
+
+  const base = import.meta.env.BASE_URL; // '/' in dev, '/sub/' with a subpath, './' in production
+
+  const [assetIndex, catalog] = await Promise.all([
+    fetch(`${base}assets/asset-index.json`).then((r) => r.json()) as Promise<AssetIndex>,
+    fetch(`${base}assets/furniture-catalog.json`).then((r) => r.json()) as Promise<CatalogEntry[]>,
+  ]);
+
+  const shouldTryDecoded = import.meta.env.DEV;
+  const [decodedCharacters, decodedFloors, decodedWalls, decodedFurniture] = shouldTryDecoded
+    ? await Promise.all([
+        fetchJsonOptional<CharacterDirectionSprites[]>(`${base}assets/decoded/characters.json`),
+        fetchJsonOptional<string[][][]>(`${base}assets/decoded/floors.json`),
+        fetchJsonOptional<string[][][][]>(`${base}assets/decoded/walls.json`),
+        fetchJsonOptional<Record<string, string[][]>>(`${base}assets/decoded/furniture.json`),
+      ])
+    : [null, null, null, null];
+
+  const hasDecoded = !!(decodedCharacters && decodedFloors && decodedWalls && decodedFurniture);
+
+  if (!hasDecoded) {
+    if (shouldTryDecoded) {
+      console.log('[BrowserMock] Decoded JSON not found, decoding PNG assets in browser...');
+    } else {
+      console.log('[BrowserMock] Decoding PNG assets in browser...');
+    }
+  }
+
+  const [characters, floorSprites, wallSets, furnitureSprites] = hasDecoded
+    ? [decodedCharacters!, decodedFloors!, decodedWalls!, decodedFurniture!]
+    : await Promise.all([
+        decodeCharactersFromPng(base, assetIndex),
+        decodeFloorsFromPng(base, assetIndex),
+        decodeWallsFromPng(base, assetIndex),
+        decodeFurnitureFromPng(base, catalog),
+      ]);
+
+  const bundledLayout = assetIndex.defaultLayout
+    ? await fetch(`${base}assets/${assetIndex.defaultLayout}`).then((r) => r.json())
+    : null;
+  const layout = readPreviewState().layout ?? bundledLayout;
+  const petAssets = await fetchJsonOptional<{ pets: PetSpriteFrames[]; petNames: string[] }>(
+    `${base}assets/decoded/pets.json`,
+  );
+
+  // Carpets only have a decoded-JSON endpoint (no PNG fallback / asset-index
+  // entry); empty array is fine — the carpet tab just won't render variants.
+  const carpetSets =
+    (shouldTryDecoded
+      ? await fetchJsonOptional<string[][][][]>(`${base}assets/decoded/carpets.json`)
+      : null) ?? [];
+
+  mockPayload = {
+    pets: petAssets?.pets ?? [],
+    petNames: petAssets?.petNames ?? [],
+    characters,
+    floorSprites,
+    wallSets,
+    carpetSets,
+    furnitureCatalog: catalog,
+    furnitureSprites,
+    layout,
+  };
+
+  console.log(
+    `[BrowserMock] Ready (${hasDecoded ? 'decoded-json' : 'browser-png-decode'}) — ${characters.length} chars, ${floorSprites.length} floors, ${wallSets.length} wall sets, ${carpetSets.length} carpets, ${catalog.length} furniture items`,
+  );
+}
+
+/**
+ * Call inside a useEffect in App.tsx -- after the window message listener
+ * in useExtensionMessages has been registered.
+ *
+ * Only used in Vite dev mode (npm run dev). In standalone server mode and
+ * VS Code mode, the server/extension sends all state over the transport.
+ */
+export function dispatchMockMessages(): void {
+  if (!mockPayload) return;
+
+  const {
+    characters,
+    floorSprites,
+    wallSets,
+    carpetSets,
+    furnitureCatalog,
+    furnitureSprites,
+    layout,
+  } = mockPayload;
+
+  function dispatch(data: unknown): void {
+    window.dispatchEvent(new MessageEvent('message', { data }));
+  }
+
+  // Must match the load order defined in CLAUDE.md:
+  // characterSpritesLoaded -> floorTilesLoaded -> wallTilesLoaded -> carpetTilesLoaded
+  //   -> furnitureAssetsLoaded -> layoutLoaded
+  dispatch({ type: 'characterSpritesLoaded', characters });
+  dispatch({ type: 'petSpritesLoaded', pets: mockPayload.pets, petNames: mockPayload.petNames });
+  dispatch({ type: 'floorTilesLoaded', sprites: floorSprites });
+  dispatch({ type: 'wallTilesLoaded', sets: wallSets });
+  dispatch({ type: 'carpetTilesLoaded', sets: carpetSets });
+  dispatch({ type: 'furnitureAssetsLoaded', catalog: furnitureCatalog, sprites: furnitureSprites });
+  dispatch({ type: 'layoutLoaded', layout });
+  const saved = readPreviewState();
+  dispatch({ ...PREVIEW_DEFAULT_SETTINGS, ...saved.settings });
+  dispatch({ type: 'areaMappingsLoaded', mappings: saved.areaMappings ?? {} });
+  dispatch({
+    type: 'workspaceFolders',
+    folders: [{ name: 'Studio demo', path: 'preview://studio' }],
+  });
+
+  // Explicit visual preview only. These demo agents never enter a production
+  // server, read transcripts, launch terminals, or alter real agent settings.
+  if (new URLSearchParams(window.location.search).get('studio') === '1') {
+    dispatch({
+      type: 'providerCapabilities',
+      readingTools: ['Read', 'Grep', 'Glob'],
+      subagentToolNames: ['Agent', 'Task'],
+    });
+    const ids = characters.map((_, index) => 901 + index);
+    dispatch({
+      type: 'existingAgents',
+      agents: ids,
+      agentMeta: Object.fromEntries(
+        ids.map((id, palette) => [
+          id,
+          saved.seats?.[id] ?? {
+            palette,
+            hueShift: 0,
+            seatId: palette < 6 ? `studio-seat-${palette}` : null,
+          },
+        ]),
+      ),
+    });
+    ids.forEach((id, index) => {
+      dispatch({
+        type: 'agentToolStart',
+        id,
+        toolId: `studio-demo-${id}`,
+        toolName: index % 2 ? 'Read' : 'Edit',
+        status: index % 2 ? 'Reading project files' : 'Building something good',
+      });
+    });
+    dispatch({ type: 'agentStatus', id: 906, status: 'idle' });
+  }
+
+  console.log('[BrowserMock] Messages dispatched');
+}
