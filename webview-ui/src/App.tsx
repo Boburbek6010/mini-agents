@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { toMajorMinor } from './changelogData.js';
+import { AgentRoster } from './components/AgentRoster.js';
 import { BottomToolbar } from './components/BottomToolbar.js';
 import { ChangelogModal } from './components/ChangelogModal.js';
+import { ChatDrawer } from './components/ChatDrawer.js';
 import { ConnectionIndicator } from './components/ConnectionIndicator.js';
 import { DebugView } from './components/DebugView.js';
 import { EditActionBar } from './components/EditActionBar.js';
@@ -14,10 +16,12 @@ import { Tooltip } from './components/Tooltip.js';
 import { Modal } from './components/ui/Modal.js';
 import { VersionIndicator } from './components/VersionIndicator.js';
 import { ZoomControls } from './components/ZoomControls.js';
+import { useAgentChat } from './hooks/useAgentChat.js';
 import { useEditorActions } from './hooks/useEditorActions.js';
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js';
 import { useExtensionMessages } from './hooks/useExtensionMessages.js';
 import { useIntroTour } from './hooks/useIntroTour.js';
+import { useOfficeAgentCharacters } from './hooks/useOfficeAgentCharacters.js';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
 import { EditorState } from './office/editor/editorState.js';
@@ -234,13 +238,29 @@ function App() {
     transport.send({ type: 'closeAgent', id });
   }, []);
 
-  const handleClick = useCallback((agentId: number) => {
-    // If clicked agent is a sub-agent, focus the parent's terminal instead
-    const os = getOfficeState();
-    const meta = os.subagentMeta.get(agentId);
-    const focusId = meta ? meta.parentAgentId : agentId;
-    transport.send({ type: 'focusAgent', id: focusId });
-  }, []);
+  const agentChat = useAgentChat(transport);
+  const chatAgentsRef = useRef(agentChat.state.agents);
+  chatAgentsRef.current = agentChat.state.agents;
+  const setOpenChat = agentChat.setOpen;
+  const officeAgentViews = useOfficeAgentCharacters(getOfficeState(), agentChat.state);
+  const officeAgentIds = useMemo(() => officeAgentViews.map((v) => v.id), [officeAgentViews]);
+
+  const handleClick = useCallback(
+    (agentId: number) => {
+      // If clicked agent is a sub-agent, focus the parent's terminal instead
+      const os = getOfficeState();
+      const meta = os.subagentMeta.get(agentId);
+      const focusId = meta ? meta.parentAgentId : agentId;
+      // Office agents (office-agents.json) open their chat instead of a terminal
+      const folderName = os.characters.get(focusId)?.folderName;
+      if (folderName && chatAgentsRef.current[folderName]) {
+        setOpenChat(folderName);
+        return;
+      }
+      transport.send({ type: 'focusAgent', id: focusId });
+    },
+    [setOpenChat],
+  );
 
   const officeState = getOfficeState();
 
@@ -435,7 +455,8 @@ function App() {
 
           <ToolOverlay
             officeState={officeState}
-            agents={agents}
+            agents={[...agents, ...officeAgentIds]}
+            officeAgents={officeAgentViews}
             agentTools={agentTools}
             subagentTools={subagentTools}
             subagentCharacters={subagentCharacters}
@@ -527,7 +548,9 @@ function App() {
         onToggleSettings={() => setIsSettingsOpen((v) => !v)}
         onOpenMascots={() => setIsMascotsOpen(true)}
         workspaceFolders={workspaceFolders}
+        agentRoster={<AgentRoster chat={agentChat.state} onOpen={agentChat.setOpen} />}
       />
+      <ChatDrawer chat={agentChat} />
       {isMascotsOpen && (
         <MascotPicker officeState={officeState} onClose={() => setIsMascotsOpen(false)} />
       )}

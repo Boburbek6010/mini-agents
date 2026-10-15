@@ -38,10 +38,20 @@ export type ServerMessage =
   | ExternalAssetDirectoriesUpdated
   | AreaMappingsLoaded
   | WorkspaceFolders
-  | AgentDiagnostics;
+  | AgentDiagnostics
+  | AgentChatRoster
+  | AgentChatEvent
+  | AgentChatStatus
+  | AgentChatCleared
+  | PermissionRequest
+  | PermissionResolved;
 
 export type ClientMessage =
   | WebviewReady
+  | AgentChatSend
+  | AgentChatStop
+  | AgentChatReset
+  | PermissionAnswer
   | LaunchAgent
   | FocusAgent
   | CloseAgent
@@ -315,8 +325,82 @@ export interface AgentDiagnostics {
   agents: Record<string, any>[];
 }
 
+export interface AgentChatRoster {
+  type: 'agentChatRoster';
+  agents: AgentChatRosterEntry[];
+}
+
+export interface AgentChatRosterEntry {
+  name: string;
+  status: AgentChatStatusValue;
+  history: ChatItem[];
+}
+
+export type AgentChatStatusValue = 'idle' | 'working' | 'approval';
+
+export interface ChatItem {
+  role: ChatItemRole;
+  text: string;
+  ts: number;
+}
+
+export type ChatItemRole = 'user' | 'assistant' | 'tool' | 'error';
+
+export interface AgentChatEvent {
+  type: 'agentChatEvent';
+  agent: string;
+  item: ChatItem;
+  append?: boolean;
+}
+
+export interface AgentChatStatus {
+  type: 'agentChatStatus';
+  agent: string;
+  status: AgentChatStatusValue;
+}
+
+export interface AgentChatCleared {
+  type: 'agentChatCleared';
+  agent: string;
+}
+
+export interface PermissionRequest {
+  type: 'permissionRequest';
+  id: string;
+  agent: string;
+  toolName: string;
+  summary: string;
+}
+
+export interface PermissionResolved {
+  type: 'permissionResolved';
+  id: string;
+}
+
 export interface WebviewReady {
   type: 'webviewReady';
+}
+
+export interface AgentChatSend {
+  type: 'agentChatSend';
+  agent: string;
+  text: string;
+}
+
+export interface AgentChatStop {
+  type: 'agentChatStop';
+  agent: string;
+}
+
+export interface AgentChatReset {
+  type: 'agentChatReset';
+  agent: string;
+}
+
+export interface PermissionAnswer {
+  type: 'permissionAnswer';
+  id: string;
+  allow: boolean;
 }
 
 export interface LaunchAgent {

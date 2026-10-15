@@ -622,6 +622,19 @@ export function setFolderNameResolver(resolver: FolderNameResolver): void {
 }
 
 /**
+ * Returns true for folder names whose sessions must NOT become characters —
+ * standalone office agents have one fixed character driven by their chat.
+ */
+let adoptionFilter: ((folderName: string) => boolean) | null = null;
+
+export function setAdoptionFilter(filter: ((folderName: string) => boolean) | null): void {
+  adoptionFilter = filter;
+}
+
+const skipAdoption = (folderName: string | undefined): boolean =>
+  !!folderName && !!adoptionFilter?.(folderName);
+
+/**
  * Scan the provider's teammate transcripts for a given lead session.
  * Each teammate gets its own independent agent (positive ID) with file watching.
  *
@@ -1116,6 +1129,7 @@ export function adoptExternalSessionFromHook(
     // Hooks-only provider (OpenCode, Copilot): no transcript file, all state from hooks
     const id = nextAgentIdRef.current++;
     const folderName = folderNameResolver?.({ cwd }) ?? (cwd ? path.basename(cwd) : undefined);
+    if (skipAdoption(folderName)) return;
     const agent: AgentState = {
       id,
       sessionId,
@@ -1168,6 +1182,7 @@ function adoptExternalSession(
   persistAgents: () => void,
   folderName?: string,
 ): void {
+  if (skipAdoption(folderName ?? folderNameResolver?.({ projectDir }))) return;
   const id = nextAgentIdRef.current++;
   // Decide whether to replay the existing file content or skip to its end.
   //

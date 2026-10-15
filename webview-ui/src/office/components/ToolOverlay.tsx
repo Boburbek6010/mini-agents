@@ -18,6 +18,7 @@ import {
   TOOL_OVERLAY_VERTICAL_OFFSET,
 } from '../../constants.js';
 import type { SubagentCharacter } from '../../hooks/useExtensionMessages.js';
+import type { OfficeAgentView } from '../../hooks/useOfficeAgentCharacters.js';
 import type { OfficeState } from '../engine/officeState.js';
 import { overlayProjection } from '../projection.js';
 import type { ToolActivity } from '../types.js';
@@ -40,6 +41,8 @@ interface ToolOverlayProps {
   panRef: React.RefObject<{ x: number; y: number }>;
   onCloseAgent: (id: number) => void;
   alwaysShowOverlay: boolean;
+  /** Fixed office-agent characters: their status line and dot come from the chat. */
+  officeAgents?: OfficeAgentView[];
 }
 
 /** Derive a short human-readable activity string from tools/status */
@@ -92,7 +95,9 @@ export function ToolOverlay({
   panRef,
   onCloseAgent,
   alwaysShowOverlay,
+  officeAgents = [],
 }: ToolOverlayProps) {
+  const officeById = new Map(officeAgents.map((v) => [v.id, v]));
   const [, setTick] = useState(0);
   useEffect(() => {
     let rafId = 0;
@@ -144,8 +149,9 @@ export function ToolOverlay({
         // so overlay counts stay stable and hover/select can still bring the
         // panel back. When always-show is off, the early return above already
         // keeps the panel hidden for idle agents.
+        const officeView = officeById.get(id);
         const isDone = ch.bubbleType === 'waiting' && !ch.waitingAwaitingInput;
-        if (isDone && !isSelected && !isHovered) {
+        if (isDone && !isSelected && !isHovered && !officeView) {
           return (
             <div
               key={id}
@@ -187,6 +193,8 @@ export function ToolOverlay({
           );
         }
 
+        if (officeView) activityText = officeView.text;
+
         // Determine dot color
         const tools = agentTools[id];
         const hasPermission = subHasPermission || tools?.some((t) => t.permissionWait && !t.done);
@@ -195,7 +203,9 @@ export function ToolOverlay({
         const hasWaiting = ch.bubbleType === 'waiting';
 
         let dotColor: string | null = null;
-        if (hasPermission || hasWaiting) {
+        if (officeView) {
+          dotColor = officeView.dot;
+        } else if (hasPermission || hasWaiting) {
           dotColor = 'var(--color-status-permission)';
         } else if (isActive && hasActiveTools) {
           dotColor = 'var(--color-status-active)';
@@ -260,7 +270,7 @@ export function ToolOverlay({
                   </span>
                 )}
               </div>
-              {isSelected && !isSub && (
+              {isSelected && !isSub && !officeView && (
                 <Button
                   variant="ghost"
                   size="icon"

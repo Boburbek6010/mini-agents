@@ -10,6 +10,9 @@
 
 import * as path from 'path';
 
+import { AgentChatManager } from './agentChat/manager.js';
+import { PermissionBroker } from './agentChat/permissions.js';
+import { loadOfficeAgents, resolveAgentName } from './agentConfig.js';
 import { AgentRuntime } from './agentRuntime.js';
 import { AgentStateStore } from './agentStateStore.js';
 import {
@@ -27,6 +30,7 @@ import {
 } from './configPersistence.js';
 import { MAX_PORT, MIN_PORT } from './constants.js';
 import { FileStateAdapter } from './fileStateAdapter.js';
+import { setAdoptionFilter, setFolderNameResolver } from './fileWatcher.js';
 import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
 import { PixelAgentsServer } from './server.js';
 
@@ -227,9 +231,31 @@ async function main(): Promise<void> {
       console.log('[Pixel Agents] Assets reloaded (external directory change)');
     };
 
+    // ── Office agent chat (headless claude per agent, approvals in the browser) ──
+    const officeAgents = loadOfficeAgents(path.join(packageRoot, 'office-agents.json'));
+    const chatRef: { current?: AgentChatManager } = {};
+    const pendingAgent = new Map<string, string>();
+    const permissions = new PermissionBroker({
+      onChange: (change) => {
+        if (change.type === 'requested') {
+          pendingAgent.set(change.req.id, change.req.agent);
+          store.broadcastPrivileged({ type: 'permissionRequest', ...change.req });
+          chatRef.current?.setStatus(change.req.agent, 'approval');
+        } else {
+          const agent = pendingAgent.get(change.id);
+          pendingAgent.delete(change.id);
+          store.broadcastPrivileged({ type: 'permissionResolved', id: change.id });
+          const stillWaiting = agent && [...pendingAgent.values()].includes(agent);
+          if (agent && !stillWaiting) chatRef.current?.setStatus(agent, 'working');
+        }
+      },
+    });
+
     const config = await server.start({
       store,
       runtime,
+      permissions,
+      chatRef,
       embedded: false,
       host: args.host,
       port: args.port,
@@ -239,6 +265,22 @@ async function main(): Promise<void> {
       onReloadAssets,
     });
     currentConfig = { port: config.port, token: config.token };
+
+    if (officeAgents.length > 0) {
+      chatRef.current = new AgentChatManager({
+        agents: officeAgents,
+        claudeBin: process.env.OFFICE_CLAUDE_BIN ?? 'claude',
+        mcpScript: path.join(distRoot, 'hooks', 'office-permission-mcp.js'),
+        officeUrl: `http://127.0.0.1:${config.port}`,
+        token: config.token,
+        stateFile: path.join(packageRoot, 'data', 'chat-sessions.json'),
+        broker: permissions,
+        emit: (m) => store.broadcastPrivileged(m as unknown as Record<string, unknown>),
+      });
+      console.log(
+        `[Pixel Agents] Office chat ready: ${officeAgents.map((a) => a.name).join(', ')}`,
+      );
+    }
 
     // Sync runtime refs with persisted settings BEFORE first scan tick. The
     // runtime's single hooksEnabled ref follows the Claude provider until the
@@ -282,6 +324,13 @@ async function main(): Promise<void> {
       );
     }
 
+    // Custom agent names from agent-names.json (falls back to folder name)
+    setFolderNameResolver((ctx) => resolveAgentName(ctx, officeAgents));
+    // Office agents have one fixed character (drawn by the UI from the chat
+    // roster), so their sessions never spawn extra characters.
+    const officeNames = new Set(officeAgents.map((a) => a.name));
+    if (officeNames.size > 0) setAdoptionFilter((name) => officeNames.has(name));
+
     // Start scanning for external sessions (Claude running in user's terminal)
     const cwd = process.cwd();
     const dirs = claudeProvider.getSessionDirs?.(cwd);
@@ -307,11 +356,17 @@ async function main(): Promise<void> {
     );
 
     // ── Graceful shutdown ──
+    let shuttingDown = false;
     function shutdown(): void {
+      if (shuttingDown) return;
+      shuttingDown = true;
       console.log('\nShutting down...');
-      runtime.dispose();
-      server.stop();
-      process.exit(0);
+      // Stop headless office agents first so none keeps running unattended.
+      void (chatRef.current?.stopAll() ?? Promise.resolve()).finally(() => {
+        runtime.dispose();
+        server.stop();
+        process.exit(0);
+      });
     }
 
     process.on('SIGINT', shutdown);

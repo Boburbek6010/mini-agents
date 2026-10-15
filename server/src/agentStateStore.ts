@@ -35,6 +35,8 @@ export interface StoreEvents {
   agentRemoved: (id: number) => void;
   agentUpdated: (id: number, agent: AgentState, field: string) => void;
   broadcast: (message: Record<string, unknown>) => void;
+  /** Like broadcast, but only for clients holding the token (agent chat transcripts, approvals). */
+  privilegedBroadcast: (message: Record<string, unknown>) => void;
 }
 
 /**
@@ -136,6 +138,11 @@ export class AgentStateStore {
   broadcast(message: Record<string, unknown>): void {
     debugLogBroadcast(message);
     this.emitter.emit('broadcast', message);
+  }
+
+  broadcastPrivileged(message: Record<string, unknown>): void {
+    debugLogBroadcast(message);
+    this.emitter.emit('privilegedBroadcast', message);
   }
 
   // ── Lifecycle ───────────────────────────────────────────────

@@ -5,6 +5,8 @@ import * as crypto from 'crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import Fastify from 'fastify';
 
+import type { AgentChatManager } from './agentChat/manager.js';
+import type { PermissionBroker } from './agentChat/permissions.js';
 import type { AgentRuntime } from './agentRuntime.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import type {
@@ -45,6 +47,10 @@ export interface HttpServerOptions {
   onSetHooksEnabled?: SetHooksEnabledSideEffect;
   /** Invoked when an external asset directory is added/removed. Standalone reloads + re-broadcasts assets here. */
   onReloadAssets?: ReloadAssetsSideEffect;
+  /** Browser-approved permission requests from headless office agents (standalone chat). */
+  permissions?: PermissionBroker;
+  /** Filled in after start (the manager needs the server token); read per message. */
+  chatRef?: { current?: AgentChatManager };
 }
 
 /** Result of createHttpServer(). */
@@ -86,6 +92,7 @@ export async function createHttpServer(options: HttpServerOptions): Promise<Http
 
   registerHealthRoute(app);
   registerHookRoute(app, options);
+  registerPermissionRoute(app, options);
   registerWebSocketRoute(app, options);
 
   // ── Listen ──────────────────────────────────────────────────
@@ -136,6 +143,40 @@ function registerHookRoute(app: FastifyInstance, options: HttpServerOptions): vo
       }
 
       reply.send('ok');
+    },
+  );
+}
+
+// ── Agent chat permissions ──────────────────────────────────────
+
+/**
+ * `POST /api/permission` — called by the office permission MCP script on behalf
+ * of a headless agent. Blocks until the user answers Allow / Deny in the browser
+ * (or the broker times out) and returns the decision JSON.
+ */
+function registerPermissionRoute(app: FastifyInstance, options: HttpServerOptions): void {
+  app.post<{ Body: { agent?: unknown; toolName?: unknown; input?: unknown } }>(
+    '/api/permission',
+    { preHandler: bearerAuth(options.token) },
+    async (request, reply) => {
+      if (!options.permissions) {
+        reply.code(503).send({ error: 'agent chat not enabled' });
+        return;
+      }
+      const { agent, toolName, input } = request.body ?? {};
+      // If the agent's MCP script hangs up (claude crashed / was stopped), drop
+      // the request so the browser stops showing an Allow / Deny card for it.
+      const gone = new AbortController();
+      reply.raw.on('close', () => {
+        if (!reply.raw.writableFinished) gone.abort();
+      });
+      const decision = await options.permissions.request(
+        typeof agent === 'string' ? agent : 'agent',
+        typeof toolName === 'string' ? toolName : 'unknown',
+        input ?? {},
+        gone.signal,
+      );
+      if (!gone.signal.aborted) reply.send(decision);
     },
   );
 }
@@ -196,6 +237,7 @@ function registerWebSocketRoute(app: FastifyInstance, options: HttpServerOptions
     store.on('agentAdded', onAgentAdded);
     store.on('agentRemoved', onAgentRemoved);
     store.on('broadcast', onBroadcast);
+    if (privileged) store.on('privilegedBroadcast', onBroadcast);
 
     // Handle incoming client messages
     socket.on('message', (data: Buffer | string) => {
@@ -211,6 +253,8 @@ function registerWebSocketRoute(app: FastifyInstance, options: HttpServerOptions
           onSetHooksEnabled: options.onSetHooksEnabled,
           onReloadAssets: options.onReloadAssets,
           privileged,
+          chat: options.chatRef?.current,
+          permissions: options.permissions,
         });
       } catch {
         // Malformed JSON, ignore
@@ -221,6 +265,7 @@ function registerWebSocketRoute(app: FastifyInstance, options: HttpServerOptions
       store.off('agentAdded', onAgentAdded);
       store.off('agentRemoved', onAgentRemoved);
       store.off('broadcast', onBroadcast);
+      store.off('privilegedBroadcast', onBroadcast);
     });
   });
 }

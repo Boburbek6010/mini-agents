@@ -118,11 +118,22 @@ components:
         - $ref: '#/components/schemas/WorkspaceFolders'
         # Diagnostics
         - $ref: '#/components/schemas/AgentDiagnostics'
+        # Agent chat (standalone)
+        - $ref: '#/components/schemas/AgentChatRoster'
+        - $ref: '#/components/schemas/AgentChatEvent'
+        - $ref: '#/components/schemas/AgentChatStatus'
+        - $ref: '#/components/schemas/AgentChatCleared'
+        - $ref: '#/components/schemas/PermissionRequest'
+        - $ref: '#/components/schemas/PermissionResolved'
       discriminator: type
 
     ClientMessage:
       oneOf:
         - $ref: '#/components/schemas/WebviewReady'
+        - $ref: '#/components/schemas/AgentChatSend'
+        - $ref: '#/components/schemas/AgentChatStop'
+        - $ref: '#/components/schemas/AgentChatReset'
+        - $ref: '#/components/schemas/PermissionAnswer'
         - $ref: '#/components/schemas/LaunchAgent'
         - $ref: '#/components/schemas/FocusAgent'
         - $ref: '#/components/schemas/CloseAgent'
@@ -1196,3 +1207,168 @@ components:
           type: string
         frame:
           type: integer
+
+    # ── Agent chat (standalone browser) ──────────────────────────
+
+    ChatItem:
+      description: One entry in an office agent's chat history.
+      type: object
+      additionalProperties: false
+      required: [role, text, ts]
+      properties:
+        role:
+          $ref: '#/components/schemas/ChatItemRole'
+        text:
+          type: string
+        ts:
+          type: number
+
+    ChatItemRole:
+      type: string
+      enum: [user, assistant, tool, error]
+
+    AgentChatRosterEntry:
+      type: object
+      additionalProperties: false
+      required: [name, status, history]
+      properties:
+        name:
+          type: string
+        status:
+          $ref: '#/components/schemas/AgentChatStatusValue'
+        history:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatItem'
+
+    AgentChatStatusValue:
+      type: string
+      enum: [idle, working, approval]
+
+    AgentChatRoster:
+      description: Configured office agents with their status and chat history (sent on webviewReady).
+      type: object
+      additionalProperties: false
+      required: [type, agents]
+      properties:
+        type:
+          const: agentChatRoster
+        agents:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentChatRosterEntry'
+
+    AgentChatEvent:
+      description: A new chat item for an agent; append=true means extend the last assistant item with item.text.
+      type: object
+      additionalProperties: false
+      required: [type, agent, item]
+      properties:
+        type:
+          const: agentChatEvent
+        agent:
+          type: string
+        item:
+          $ref: '#/components/schemas/ChatItem'
+        append:
+          type: boolean
+
+    AgentChatStatus:
+      description: An office agent's status changed.
+      type: object
+      additionalProperties: false
+      required: [type, agent, status]
+      properties:
+        type:
+          const: agentChatStatus
+        agent:
+          type: string
+        status:
+          $ref: '#/components/schemas/AgentChatStatusValue'
+
+    AgentChatCleared:
+      description: An office agent's chat was reset (New chat).
+      type: object
+      additionalProperties: false
+      required: [type, agent]
+      properties:
+        type:
+          const: agentChatCleared
+        agent:
+          type: string
+
+    PermissionRequest:
+      description: A headless office agent is waiting for Allow / Deny.
+      type: object
+      additionalProperties: false
+      required: [type, id, agent, toolName, summary]
+      properties:
+        type:
+          const: permissionRequest
+        id:
+          type: string
+        agent:
+          type: string
+        toolName:
+          type: string
+        summary:
+          type: string
+
+    PermissionResolved:
+      description: A pending permission request was answered, timed out, or cancelled.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: permissionResolved
+        id:
+          type: string
+
+    AgentChatSend:
+      description: Send a message to an office agent (privileged clients only).
+      type: object
+      additionalProperties: false
+      required: [type, agent, text]
+      properties:
+        type:
+          const: agentChatSend
+        agent:
+          type: string
+        text:
+          type: string
+
+    AgentChatStop:
+      description: Interrupt an office agent's running turn (privileged clients only).
+      type: object
+      additionalProperties: false
+      required: [type, agent]
+      properties:
+        type:
+          const: agentChatStop
+        agent:
+          type: string
+
+    AgentChatReset:
+      description: Start a new chat with an office agent (privileged clients only).
+      type: object
+      additionalProperties: false
+      required: [type, agent]
+      properties:
+        type:
+          const: agentChatReset
+        agent:
+          type: string
+
+    PermissionAnswer:
+      description: Answer a pending permission request (privileged clients only).
+      type: object
+      additionalProperties: false
+      required: [type, id, allow]
+      properties:
+        type:
+          const: permissionAnswer
+        id:
+          type: string
+        allow:
+          type: boolean

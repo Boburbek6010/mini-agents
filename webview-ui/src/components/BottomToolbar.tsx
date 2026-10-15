@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 
 import type { WorkspaceFolder } from '../hooks/useExtensionMessages.js';
@@ -14,6 +15,8 @@ interface BottomToolbarProps {
   onToggleSettings: () => void;
   onOpenMascots: () => void;
   workspaceFolders: WorkspaceFolder[];
+  /** Office agent chat roster button (standalone only; renders nothing without agents). */
+  agentRoster?: ReactNode;
 }
 
 export function BottomToolbar({
@@ -24,6 +27,7 @@ export function BottomToolbar({
   onToggleSettings,
   onOpenMascots,
   workspaceFolders,
+  agentRoster,
 }: BottomToolbarProps) {
   const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
   const [isBypassMenuOpen, setIsBypassMenuOpen] = useState(false);
@@ -122,6 +126,7 @@ export function BottomToolbar({
           </Dropdown>
         </div>
       )}
+      {agentRoster}
       <Button
         variant={isEditMode ? 'active' : 'default'}
         onClick={onToggleEditMode}

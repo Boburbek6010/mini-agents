@@ -1,5 +1,7 @@
 import type { HookProvider } from '../../core/src/provider.js';
 import { resendAgentActivity } from './agentActivityResend.js';
+import type { AgentChatManager } from './agentChat/manager.js';
+import type { PermissionBroker } from './agentChat/permissions.js';
 import { buildAgentDiagnostics } from './agentDiagnostics.js';
 import type { AgentRuntime } from './agentRuntime.js';
 import type { AgentStateStore } from './agentStateStore.js';
@@ -60,6 +62,9 @@ export interface ClientMessageContext {
    * to false so a caller that forgets to pass it gets the safe answer.
    */
   privileged?: boolean;
+  /** Office agent chat (standalone only). Chat + permission messages also require `privileged`. */
+  chat?: AgentChatManager;
+  permissions?: PermissionBroker;
 }
 
 // ── Setting key constants (mirror adapters/vscode/constants.ts) ──
@@ -264,6 +269,27 @@ export function handleClientMessage(
       break;
     }
 
+    case 'agentChatSend': {
+      if (!ctx.privileged || !ctx.chat) break;
+      const text = typeof msg.text === 'string' ? msg.text.trim() : '';
+      if (typeof msg.agent === 'string' && text) ctx.chat.send(msg.agent, text);
+      break;
+    }
+
+    case 'agentChatStop':
+      if (ctx.privileged && typeof msg.agent === 'string') ctx.chat?.stop(msg.agent);
+      break;
+
+    case 'agentChatReset':
+      if (ctx.privileged && typeof msg.agent === 'string') ctx.chat?.reset(msg.agent);
+      break;
+
+    case 'permissionAnswer':
+      if (ctx.privileged && typeof msg.id === 'string') {
+        ctx.permissions?.answer(msg.id, msg.allow === true);
+      }
+      break;
+
     case 'setShowAreas': {
       const enabled = msg.enabled as boolean;
       adapter?.setSetting(KEY_SHOW_AREAS, enabled);
@@ -358,6 +384,14 @@ function standaloneConsentEffects(
 function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   const { store, runtime, cache } = ctx;
   const adapter = store.getAdapter();
+
+  // 0. Office agent chat (token holders only): roster + permissions still waiting
+  if (ctx.privileged) {
+    if (ctx.chat) send({ type: 'agentChatRoster', agents: ctx.chat.roster() });
+    for (const req of ctx.permissions?.pending() ?? []) {
+      send({ type: 'permissionRequest', ...req });
+    }
+  }
 
   // 1. Provider capabilities (must arrive before any agent messages)
   send({

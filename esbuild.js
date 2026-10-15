@@ -59,6 +59,15 @@ function buildHooks() {
     outdir: path.join(__dirname, 'dist', 'hooks'),
     banner: { js: '#!/usr/bin/env node' },
   });
+  require('esbuild').buildSync({
+    entryPoints: [path.join(__dirname, 'server', 'src', 'agentChat', 'permissionMcp.ts')],
+    bundle: true,
+    platform: 'node',
+    target: 'node18',
+    format: 'cjs',
+    outfile: path.join(__dirname, 'dist', 'hooks', 'office-permission-mcp.js'),
+    banner: { js: '#!/usr/bin/env node' },
+  });
   console.log('✓ Built hooks/ → dist/hooks/');
 }
 
